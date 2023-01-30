@@ -111,11 +111,13 @@ class Fidilio:
             for i in range(0, value + 1):
                 url = key + "/?p=" + str(i)
                 coffeeshops_info_urls_list.append(url)
-        print("Number of coffeeshops_info_urls_list: ", len(coffeeshops_info_urls_list))
+        # get coffeeshops_info data
+        df = self.get_coffeeshops_info(coffeeshops_info_urls_list)
+
     def get_coffeeshops_last_page(self, city_urls_list):
         infos_list = self.request_url(city_urls_list)
         res_dict = {}
-        for info in infos_list:
+        for info in tqdm(infos_list, desc="get_coffeeshops_last_page"):
             link = info[0]
             soup = BeautifulSoup(info[1], "html.parser")
             last_page = self.parse_last_page(inp_soup=soup)
@@ -128,7 +130,6 @@ class Fidilio:
                     status_code_list=[200, ]) -> list:
         result = []
         out = []
-
         max_count = math.ceil((len(inp_list) * 1.5) / 100)
         if max_count < 3:
             max_count = 3
@@ -183,11 +184,13 @@ class Fidilio:
                 print(Fore.YELLOW + "Error: {}".format(link))
                 continue
         else:
+            pbar.close()
             return result
-
+        pbar.close()
         return result
 
-    def parse_last_page(self, inp_soup):
+    @staticmethod
+    def parse_last_page(inp_soup):
         last_page = -1
         container_tag = inp_soup.find("div", {"id": "container"})
         pages_tags = container_tag.find_all("a")
@@ -196,5 +199,134 @@ class Fidilio:
             if page_tag.getText() == "اخری":
                 last_page_url = page_tag.get("href")
                 last_page = int(last_page_url.split("p=")[-1].strip())
-                break
         return last_page
+
+    def get_coffeeshops_info(self, coffeeshops_info_urls_list) -> pd.DataFrame:
+        # coffeeshops_info_urls_list = ["https://fidilio.com/coffeeshops/in/tehran/تهران/?p=1"]
+        infos_list = self.request_coffeeshops_info_url(coffeeshops_info_urls_list)
+        df = pd.DataFrame()
+        for info in tqdm(infos_list, desc="Parsing coffeeshops info"):
+            link = info[0]
+            print(link)
+            soup = BeautifulSoup(info[1], "html.parser")
+            df = self.parse_coffeeshops_info(inp_soup=soup)
+        return df
+
+    def request_coffeeshops_info_url(self,
+                                     inp_list: list,
+                                     status_code_list=[200, ]) -> list:
+        result = []
+        out = []
+        max_count = math.ceil((len(inp_list) * 1.5) / 100)
+        if max_count < 3:
+            max_count = 3
+
+        def load_url(url, timeout):
+            ans = requests.get(url, timeout=timeout, headers=self.headers)
+            ans.encoding = ans.apparent_encoding
+            return ans
+
+        count = 1
+        count_first_inp_list = len(inp_list)
+        count_last_inp_list = len(inp_list)
+        pbar = tqdm(total=count_first_inp_list, desc="Requesting to urls")
+        while (len(inp_list)) and (count <= max_count):
+            inp_dict = dict()
+            for this_url in inp_list:
+                name = this_url.split("/")[-3]
+                page_number = this_url.split("p=")[-1]
+                key = name + "_" + page_number
+                inp_dict[key] = this_url
+
+            random.shuffle(inp_list)
+
+            req_ls = list()
+            if len(inp_list) > self.count_of_url_requests:
+                req_ls = inp_list[0:self.count_of_url_requests].copy()
+            else:
+                req_ls = inp_list.copy()
+
+            with ThreadPoolExecutor(max_workers=len(req_ls)) as executor:
+                future_to_url = (executor.submit(load_url, url, 30) for url in req_ls)
+                time.sleep(self.sleep_time_between_requests)
+                for future in as_completed(future_to_url):
+                    try:
+                        data = future.result()
+                        out.append(data)
+                    except Exception as exc:
+                        # print(Fore.YELLOW + str(type(exc)))
+                        continue
+
+            for item in out:
+                if item.status_code in status_code_list:
+                    this_name = item.url.split("/")[-3]
+                    this_number = item.url.split("p=")[-1]
+                    this_key = this_name + "_" + this_number
+                    if this_key in inp_dict:
+                        result.append((inp_dict[this_key], item.text))
+                        inp_list.remove(inp_dict[this_key])
+            count += 1
+            pbar.update(count_last_inp_list - len(inp_list))
+            count_last_inp_list = len(inp_list)
+
+        # pbar.close()
+        if (count > max_count) and (len(inp_list)):
+            for link in inp_list:
+                print(Fore.YELLOW + "Error: {}".format(link))
+                continue
+        else:
+            return result
+
+        return result
+
+    def parse_coffeeshops_info(self, inp_soup):
+
+        all_base_tags = inp_soup.find_all("div", {"class": "restaurant-list-items span-4 th-span-6 mn-span-12"})
+        for this_coffeeshop_tag in all_base_tags:
+            # title, url
+            title_url_tag = this_coffeeshop_tag.find("a", {"class": "restaurant-link"})
+            title = title_url_tag.get("title").strip()
+            url = title_url_tag.get("href").strip()
+            if (url is not None) or (url != ""):
+                url = self.url + url
+            else:
+                url = ""
+            print("title: {}".format(title))
+            print("url: {}".format(url))
+
+            # image_link
+            image_tag = this_coffeeshop_tag.find("img")
+            image_link = image_tag.get("src").strip()
+            print("image_link: {}".format(image_link))
+
+            # info_title, address, price_class, rate, followers
+            info_tag = this_coffeeshop_tag.find("div", {"class": "info"})
+
+            info_title_tag = info_tag.find("div", {"class": "venue-title"})
+            info_title = info_title_tag.getText().strip()
+            print("info_title: {}".format(info_title))
+
+            address_tag = info_tag.find("div", {"class": "venue-address"})
+            address = address_tag.getText().strip()
+            print("address: {}".format(address))
+
+            footer_tag = info_tag.find("div", {"class": "foot"})
+
+            # price_class
+            price_class_tag = footer_tag.find("span", {"class": "price-class"})
+            active_price_class_tags = price_class_tag.find_all("span", {"class": "active"})
+            price_class = len(active_price_class_tags)
+            print("price_class: {}".format(price_class))
+
+            # rate
+            rate_tag = footer_tag.find("span", {"class": "rate"})
+            rate_value_tag = rate_tag.find("div", {"class": "rate-it"})
+            rate = rate_value_tag.get("data-rateit-value")
+            print("rate: {}".format(rate))
+
+            # followers
+            followers_tag = footer_tag.find("span", {"class": "followers"})
+            follower = followers_tag.getText().strip()
+            print("follower: {}".format(follower))
+
+            print("--------------------------------------------------")
