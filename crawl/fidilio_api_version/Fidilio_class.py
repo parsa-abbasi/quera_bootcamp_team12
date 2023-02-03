@@ -26,8 +26,8 @@ class Fidilio:
         self.base_user_url = "https://fidilio.com/u/"
         self.bas_path_directory = os.getcwd()
         self.output_path_directory = ""
-        self.count_of_url_requests = 300
-        self.sleep_time_between_requests = 3
+        self.count_of_url_requests = 100
+        self.sleep_time_between_requests = 10
 
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0",
@@ -104,9 +104,9 @@ class Fidilio:
                     status_code_list=[200, ]) -> list:
         result = []
         out = []
-        max_count = math.ceil((len(inp_list) * 1.5) / 100)
-        if max_count < 3:
-            max_count = 3
+        max_count = math.ceil((len(inp_list) * 1.5) / self.count_of_url_requests)
+        if max_count < 8:
+            max_count = 8
 
         def load_url(inp_data, timeout):
             ans = requests.post(self.api_url, timeout=timeout, headers=self.headers, data=inp_data)
@@ -167,14 +167,29 @@ class Fidilio:
 
         # get data details
         df_data_details = self.get_data_details(list_url)
+
+        # concat data
+        try:
+            df_data_details_on_csv = pd.read_csv(self.output_path_directory + "\\data_details.csv")
+        except Exception as e:
+            df_data_details_on_csv = pd.DataFrame()
+
+        df_data_details = pd.concat([df_data_details, df_data_details_on_csv], ignore_index=True)
+
+        # clean data
+        df_data_details.sort_values(by=["update_date"], inplace=True)
+        df_data_details.drop_duplicates(subset=["url"], inplace=True, keep="last")
+        df_data_details.reset_index(drop=True, inplace=True)
         print(df_data_details)
 
         # save data
         df_data_details.to_csv(self.output_path_directory + "\\data_details.csv", index=False, encoding="utf-8-sig")
+        df_data_details.to_json(self.output_path_directory + "\\data_details.json", orient="records", force_ascii=False,
+                                index=True)
 
     def get_data_details(self, list_url) -> pd.DataFrame:
         res_df = pd.DataFrame()
-        list_url = list_url[0:100].copy()
+        # list_url = list_url[:1500].copy()
         # https://fidilio.com/restaurants/barcoo1
         # list_url = ["https://fidilio.com/restaurants/borito"]
         # list_url = ["https://fidilio.com/restaurants/barcoo1"]
@@ -184,6 +199,7 @@ class Fidilio:
             soup = BeautifulSoup(info[1], "html.parser")
             df = self.parse_data_details(soup)
             df["url"] = link
+            df["update_date"] = str(datetime.now())
             df = df[[
                 'url',
                 'name',
@@ -199,8 +215,8 @@ class Fidilio:
                 'reviews',
                 'information',
                 'users_url',
-                'popular_menu_api']].copy()
-            # print(df)
+                'popular_menu_api',
+                "update_date"]].copy()
             res_df = pd.concat([res_df, df])
 
         return res_df
@@ -210,9 +226,9 @@ class Fidilio:
                     status_code_list=[200, ]) -> list:
         result = []
         out = []
-        max_count = math.ceil((len(inp_list) * 1.5) / 100)
-        if max_count < 3:
-            max_count = 3
+        max_count = math.ceil((len(inp_list) * 1.5) / self.count_of_url_requests)
+        if max_count < 8:
+            max_count = 8
 
         def load_url(url, timeout):
             ans = requests.get(url, timeout=timeout, headers=self.headers)
